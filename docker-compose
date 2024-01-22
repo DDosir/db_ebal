@@ -1,0 +1,43 @@
+# Stage 1: Prepare the environment
+FROM node:18.17-alpine3.17 as env_prep
+WORKDIR /usr/src/app
+COPY Makefile ./Makefile
+RUN apk add --no-cache make openssh openssl
+RUN make generate-keys
+
+# Stage 2: Bundle the application
+FROM node:18.17-alpine3.17 as bundle
+WORKDIR /usr/src/app
+
+COPY package*.json ./
+
+RUN npm install --ignore-scripts
+
+COPY babel.config.js sonar-project.properties ./
+
+COPY src ./src
+COPY tests ./tests
+COPY src/migrations ./src/migrations
+COPY src/cron ./src/cron
+
+RUN npm run build
+
+# Stage 3: Install production dependencies
+FROM node:18.17-alpine3.17 as deps
+WORKDIR /usr/src/app
+
+COPY package*.json ./
+RUN npm --production --ignore-scripts install
+RUN npm rebuild sharp
+
+# Stage 4: Create the final image
+FROM node:18.17-alpine3.17
+WORKDIR /usr/src/app
+
+COPY --from=env_prep /usr/src/app/keys ./keys
+COPY --from=bundle /usr/src/app/dist ./dist
+COPY --from=deps /usr/src/app/node_modules ./node_modules
+
+CMD [ "node", "dist/index.js" ]
+
+EXPOSE 8080
